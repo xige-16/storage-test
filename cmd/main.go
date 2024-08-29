@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"github.com/xige-16/storage-test/pkg/log"
+	"go.uber.org/zap"
 
 	"github.com/xige-16/storage-test/cmd/minio"
 	"github.com/xige-16/storage-test/internal/storage"
 	"github.com/xige-16/storage-test/pkg/util/paramtable"
-	"sync"
-	"time"
 )
 
 //type ObjectStorage interface {
@@ -20,6 +21,14 @@ import (
 //}
 
 func main() {
+	rps := flag.Int64("rps", 1.0, "rps value")
+	size := flag.Int64("size", 1024, "size of data written to minio")
+	reqTime := flag.Int64("request_time", 60, "Time for server send requests in seconds")
+
+	// 解析命令行参数
+	flag.Parse()
+	log.Info("parse args done", zap.Int64("rps", *rps), zap.Int64("data size", *size), zap.Int64("timeout", *reqTime))
+
 	ctx := context.Background()
 	paramtable.Init()
 	Params := paramtable.Get()
@@ -34,57 +43,23 @@ func main() {
 	bucketName := remoteChunkManager.BucketName
 	rootPath := remoteChunkManager.RootPath()
 
-	timeout := 300 * time.Second
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		childCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		minio.PutObject(childCtx, minioClient, bucketName, rootPath, 1)
-		wg.Done()
-	}()
+	err = minio.PutObject(ctx, minioClient, bucketName, rootPath, *rps, *size, *reqTime)
+	if err != nil {
+		log.Error("PutObject error", zap.Error(err))
+		return
+	}
 
-	wg.Wait()
+	err = minio.GetObject(ctx, minioClient, bucketName, rootPath, *rps, *reqTime)
+	if err != nil {
+		log.Error("GetObject error", zap.Error(err))
+		return
+	}
 
-	//offset := 0
-	//input := make([]byte, 8000000, 8000000)
-	//err = minioClient.PutObject(ctx, bucketName, path.Join(rootPath, common.SegmentInsertLogPath, strconv.Itoa(offset)), bytes.NewReader(input), int64(len(input)))
-	//if err != nil {
-	//	panic(err)
-	//}
-
-	//size, err := minioClient.StatObject(ctx, bucketName, "test1")
-	//if err != nil {
-	//	panic(err)
-	//}
-	//
-	//object, err := minioClient.GetObject(ctx, bucketName, "test1", int64(0), int64(0))
-	//if err != nil {
-	//	panic(err)
-	//}
-	//
-	//output, err := storage.Read(object, size)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//if len(output) != len(input) {
-	//	log.Info("input and output len", zap.Int("input len", len(input)), zap.Int("output len", len(output)))
-	//	panic("input and output not consistent")
-	//}
-	//
-	//keys, _, err := minioClient.ListObjects(ctx, bucketName, "", true)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//log.Info("list keys", zap.Strings("keys", keys), zap.String("path", rootPath))
-	//if !slices.Contains(keys, "test") {
-	//	panic("file not exit in list keys")
-	//}
-	//
-	//err = minioClient.RemoveObject(ctx, bucketName, "test")
-	//if err != nil {
-	//	panic(err)
-	//}
+	err = minio.RemoveObject(ctx, minioClient, bucketName, rootPath, *rps, *reqTime)
+	if err != nil {
+		log.Error("RemoveObject error", zap.Error(err))
+		return
+	}
 
 	fmt.Print("minio func test done!")
 }

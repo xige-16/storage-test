@@ -189,7 +189,6 @@ func (minioObjectStorage *MinioObjectStorage) PutObject(ctx context.Context, buc
 
 func (minioObjectStorage *MinioObjectStorage) StatObject(ctx context.Context, bucketName, objectName string) (int64, error) {
 	info, err := minioObjectStorage.Client.StatObject(ctx, bucketName, objectName, minio.StatObjectOptions{})
-	log.Info("state result", zap.Any("state", info))
 	return info.Size, err
 }
 

@@ -3,67 +3,61 @@ package minio
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"github.com/xige-16/storage-test/pkg/log"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"path"
-	"sort"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/xige-16/storage-test/internal/storage"
 	"github.com/xige-16/storage-test/pkg/common"
 )
 
-func PutObject(ctx context.Context, minioClient storage.ObjectStorage, bucketName, rootPath string, qps int) {
+func PutObject(ctx context.Context,
+	minioClient storage.ObjectStorage,
+	bucketName, rootPath string,
+	qps, size, reqTime int64) error {
 
-	input := make([]byte, 16000000, 16000000)
+	input := make([]byte, size, size)
+	log.Info("PutObject init input data done", zap.Int("size", len(input)))
 	// 创建存储延迟的切片
 	var latencies []time.Duration
 
-	ticker := time.NewTicker(time.Second / time.Duration(qps))
-	defer ticker.Stop()
+	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(reqTime)*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(1000 * time.Millisecond / time.Duration(qps))
+	log.Info("PutObject start...", zap.Int64("qps", qps))
 
 	stop := true
-	offset := 10
-	wg := &sync.WaitGroup{}
+	offset := 0
+	group, _ := errgroup.WithContext(ctx)
 	for stop {
 		select {
-		case <-ctx.Done():
+		case <-timeoutCtx.Done():
 			stop = false
+			ticker.Stop()
 		case <-ticker.C:
-			wg.Add(1)
-			go func() {
+			group.Go(func() error {
 				startTime := time.Now()
 				err := minioClient.PutObject(ctx, bucketName, path.Join(rootPath, common.SegmentInsertLogPath, strconv.Itoa(offset)), bytes.NewReader(input), int64(len(input)))
 				if err != nil {
-					panic(err)
+					return err
 				}
 				latency := time.Since(startTime)
 				latencies = append(latencies, latency)
+				//log.Debug("PutObject done", zap.String("key", key))
 
-				wg.Done()
-			}()
+				return nil
+			})
 			offset += 1
-			stop = false
 		}
 	}
-	wg.Wait()
 
-	// 计算平均延迟
-	var totalLatency time.Duration
-	for _, latency := range latencies {
-		totalLatency += latency
-	}
-	averageLatency := totalLatency / time.Duration(len(latencies))
+	group.Wait()
 
-	// 排序后计算 P99 和 P95
-	sort.Slice(latencies, func(i, j int) bool {
-		return latencies[i] < latencies[j]
-	})
-	p95 := latencies[len(latencies)*95/100]
-	p99 := latencies[len(latencies)*99/100]
+	log.Info("PutObject done", zap.Int64("reqTime", reqTime), zap.Int("reqCount", len(latencies)))
 
-	fmt.Printf("putObject Average Latency: %v\n", averageLatency)
-	fmt.Printf("putObject P95 Latency: %v\n", p95)
-	fmt.Printf("putObject P99 Latency: %v\n", p99)
+	return PrintStatics(latencies, "PutObject")
 }
